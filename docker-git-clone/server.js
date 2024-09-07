@@ -4,8 +4,10 @@ const cors = require('cors');
 const { v4: uuidv4 } = require('uuid'); // Import UUID for unique container names
 const app = express();
 const port = 3002;
+const http = require('http');
 
 const docker = new Docker();
+let clients = [];
 
 app.use(cors());
 app.use(express.json());
@@ -40,9 +42,9 @@ app.post('/run', async (req, res) => {
             return res.status(400).send('Invalid project type');
         }
 
-        // Create a new Docker container
+        // Create a new Docker container using the custom image
         const container = await docker.createContainer({
-            Image: 'node:lts-alpine3.20', // Use a Node.js base image
+            Image: 'custom-node-cloudflared', // Use the custom image
             Cmd: ['sh', '-c', 'while true; do sleep 1000; done'],
             Tty: true,
             WorkingDir: '/app',
@@ -50,15 +52,43 @@ app.post('/run', async (req, res) => {
             ExposedPorts: { [exposedPort]: {} }, // Expose the selected port
             HostConfig: {
                 PortBindings: portBindings,
-                 NetworkMode: 'my_custom_network'
+                NetworkMode: 'my_custom_network'
             }
         });
 
         // Start the container
         await container.start();
 
-        // Connect the container to your custom network
-        
+        // Run Cloudflare tunnel command inside the container
+        const cloudflaredCmd = `cloudflared tunnel --url http://localhost:${exposedPort}`;
+        const cloudflaredExec = await container.exec({
+            Cmd: ['sh', '-c', cloudflaredCmd],
+            AttachStdout: true,
+            AttachStderr: true,
+            NetworkMode: 'my_custom_network' 
+        });
+
+        const cloudflaredStream = await cloudflaredExec.start();
+
+        cloudflaredStream.on('data', (data) => {
+            const log = data.toString();
+            console.log(log);
+
+            // Extract the tunnel URL from the logs
+            const tunnelUrlMatch = log.match(/https:\/\/[^\s]+trycloudflare.com/);
+            sendEventToAllClients(tunnelUrlMatch);
+            if (tunnelUrlMatch) {
+                const tunnelUrl = tunnelUrlMatch[0];
+                console.log(`Cloudflare tunnel created: ${tunnelUrl}`);
+                if (!res.headersSent) {
+                    res.send(`Container ${containerName} started and application running. Access it at  <a href="${tunnelUrl}" target="_blank">${tunnelUrl}</a>`);
+                }
+            }
+        });
+
+        cloudflaredStream.on('end', () => {
+            console.log('Cloudflare tunnel command execution ended');
+        });
 
         // Determine the command based on project type
         let installAndRunCmd;
@@ -75,29 +105,57 @@ app.post('/run', async (req, res) => {
             AttachStderr: true
         });
 
-        const stream = await execInstance.start();
+        const execStream = await execInstance.start();
 
-        stream.on('data', (data) => {
+        execStream.on('data', (data) => {
             console.log(data.toString());
         });
 
-        stream.on('end', () => {
-            res.send(`Container ${containerName} started and application running. Access it at http://localhost:${hostPort}`);
-        });
-
-        // Release the port when the container stops
-        container.on('stop', () => {
-            availablePorts.push(hostPort);
+        execStream.on('end', () => {
+            console.log('Repository cloned and dependencies installed');
         });
 
     } catch (error) {
-        console.error(error);
-        res.status(500).send('An error occurred');
+        console.error('Error starting container:', error);
+        res.status(500).send('Error starting container');
     }
 });
+app.get('/events', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
 
+    const clientId = Date.now();
+    const newClient = {
+        id: clientId,
+        res
+    };
+    clients.push(newClient);
 
+    req.on('close', () => {
+        clients = clients.filter(client => client.id !== clientId);
+    });
+});
 
+http.createServer((req, res) => {
+    if (req.url === '/events') {
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive'
+        });
+        clients.push(res);
+
+        req.on('close', () => {
+            clients.splice(clients.indexOf(res), 1);
+        });
+    }
+}).listen(8000);
+
+function sendEventToAllClients(message) {
+    clients.forEach(client => client.res.write(`data: ${JSON.stringify({ message })}\n\n`));
+}
 app.listen(port, () => {
-    console.log(`Server is running on http://localhost:${port}`);
+    console.log(`Server running on port ${port}`);
 });

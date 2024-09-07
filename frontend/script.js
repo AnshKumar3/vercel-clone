@@ -10,7 +10,7 @@ document.getElementById('repoForm').addEventListener('submit', async (event) => 
     try {
         
 
-        const response = await fetch('https://scale-letting-rings-drainage.trycloudflare.com/run', {
+        const response = await fetch('http://localhost:3002/run', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
