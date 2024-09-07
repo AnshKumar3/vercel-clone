@@ -6,7 +6,7 @@ document.getElementById('repoForm').addEventListener('submit', async (event) => 
     output.innerHTML = 'Starting container...';
 
     try {
-        const response = await fetch('https://nirvana-healthy-rescue-restrict.trycloudflare.com/run', {
+        const response = await fetch('https://your custom url /run', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
