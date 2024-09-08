@@ -81,7 +81,7 @@ app.post('/run', async (req, res) => {
                 const tunnelUrl = tunnelUrlMatch[0];
                 console.log(`Cloudflare tunnel created: ${tunnelUrl}`);
                 if (!res.headersSent) {
-                    res.send(`Container ${containerName} started and application running. Access it at  <a href="${tunnelUrl}" target="_blank">${tunnelUrl}</a>`);
+                    res.send(`Container ${containerName} started and application running. Access it at  <a href="${tunnelUrl}" target="_blank">${tunnelUrl}</a> note:the server takes two mins to spin`);
                 }
             }
         });
